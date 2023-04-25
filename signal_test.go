@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +82,30 @@ func TestSignalListenOnce(t *testing.T) {
 	require.True(t, <-testDone)
 	require.Equal(t, int32(1), doneWithFinish.Load())
 	require.Len(t, received, 1)
+}
+
+func TestSignalStream(t *testing.T) {
+	ev := NewSignal[int]()
+	wg := sync.WaitGroup{}
+	sub := ev.Listeners().Listen()
+	defer sub.Close()
+	max := 1000
+	wg.Add(max)
+	received := []int{}
+	go func() {
+		for i := range sub.C() {
+			t.Logf("sub received signal, i=%d", i)
+			received = append(received, i)
+			wg.Done()
+		}
+	}()
+	go func() {
+		for i := 0; i < max; i++ {
+			t.Logf("emiting signal, i=%d", i)
+			ev.Emit(i)
+		}
+	}()
+	wg.Wait()
+	time.Sleep(time.Second)
+	require.Len(t, received, max)
 }

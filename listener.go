@@ -32,7 +32,6 @@ func (sub *signalSubscription[T]) internalFire(v T) {
 		return
 	}
 	sub.c <- v
-	sub.closeLocked()
 }
 
 func (sub *signalSubscription[T]) Close() {
