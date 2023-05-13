@@ -24,16 +24,21 @@ func newListeners[T any](bufferSize int) *listeners[T] {
 }
 
 func (subs *listeners[T]) loop() {
+	defer close(subs.fanout)
 	listenerCount := 0
 	for {
 		select {
 		case sub := <-subs.addChan:
 			sub.WaitLaunch()
 			listenerCount++
+			sub.NotifyAdded()
 		case sub := <-subs.removeChan:
 			listenerCount--
 			sub.completeShutdown()
-		case v := <-subs.input:
+		case v, open := <-subs.input:
+			if !open {
+				return
+			}
 			for i := 0; i < listenerCount; i++ {
 				subs.fanout <- v // repeat the same value for each listener
 			}
@@ -48,10 +53,15 @@ func (subs *listeners[T]) fire(v T) {
 func (subs *listeners[T]) Listen() Listener[T] {
 	sub := newSignalSubscription(subs.requestShutdown, subs.fanout)
 	subs.addChan <- sub
-	sub.WaitLaunch()
+	sub.WaitAdded()
 	return sub
 }
 
 func (subs *listeners[T]) requestShutdown(sub *signalSubscription[T]) {
 	subs.removeChan <- sub
+}
+
+// close closes the listeners
+func (subs *listeners[T]) close() {
+	close(subs.input)
 }

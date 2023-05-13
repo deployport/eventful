@@ -7,7 +7,7 @@ type Signal[T any] struct {
 
 // NewSignal creates a new Signal. The returned instance should not be exposed to the outside world, instead, the Listeners can be exposed to allow third-party listeners.
 func NewSignal[T any](opts ...SignalOpt) *Signal[T] {
-	o := SignalOptions{}
+	o := newSignalOptions()
 	for _, opt := range opts {
 		opt.Apply(&o)
 	}
@@ -25,4 +25,9 @@ func (ev *Signal[T]) Emit(v T) {
 // Listeners returns the subscriptions for this signal
 func (ev *Signal[T]) Listeners() Listeners[T] {
 	return ev.subs
+}
+
+// Close closes
+func (ev *Signal[T]) Close() {
+	ev.subs.close()
 }

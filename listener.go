@@ -9,7 +9,8 @@ import (
 type Listener[T any] interface {
 	// C returns the channel that will receive the events while the subscription is active
 	C() <-chan T
-	// Close unsubscribes from the event preventing the channel from receiving more events
+	// Close unsubscribes from the event preventing the channel from receiving more events.
+	// After a successful call to Close, eventually the channel is closed. Note that the channel may still have messages to be read before it is closed.
 	Close()
 }
 
@@ -22,6 +23,7 @@ type signalSubscription[T any] struct {
 	mutex           sync.Mutex
 	closeChan       chan struct{}
 	launchedChan    chan struct{}
+	addedChan       chan struct{}
 	shuttingDown    atomic.Bool
 }
 
@@ -32,6 +34,7 @@ func newSignalSubscription[T any](requestShutdown func(sub *signalSubscription[T
 		output:          make(chan T), // TODO: use buffer
 		closeChan:       make(chan struct{}),
 		launchedChan:    make(chan struct{}),
+		addedChan:       make(chan struct{}),
 	}
 	go sub.loop()
 	return sub
@@ -42,15 +45,29 @@ func (sub *signalSubscription[T]) WaitLaunch() {
 	<-sub.launchedChan
 }
 
+// WaitCreation notifies the subscription has been added to the listeners
+func (sub *signalSubscription[T]) NotifyAdded() {
+	sub.WaitLaunch()
+	close(sub.addedChan)
+}
+
+// WaitCreation blocks until the subscription has been added to the listeners
+func (sub *signalSubscription[T]) WaitAdded() {
+	<-sub.addedChan
+}
+
 func (sub *signalSubscription[T]) launchComplete() {
 	close(sub.launchedChan)
 }
 func (sub *signalSubscription[T]) loop() {
 	defer close(sub.output)
 	sub.launchComplete()
-	for {
+	for !sub.shuttingDown.Load() {
 		select {
-		case v := <-sub.input:
+		case v, open := <-sub.input:
+			if !open {
+				return
+			}
 			if sub.shuttingDown.Load() {
 				continue
 			}
@@ -62,19 +79,19 @@ func (sub *signalSubscription[T]) loop() {
 }
 
 func (sub *signalSubscription[T]) Close() {
-	sub.mutex.Lock()
-	defer sub.mutex.Unlock()
 	sub.beginShutdown()
 }
 
 func (sub *signalSubscription[T]) beginShutdown() {
+	sub.mutex.Lock()
+	defer sub.mutex.Unlock()
 	requestShutdown := sub.requestShutdown
 	if requestShutdown == nil {
 		return
 	}
 	sub.shuttingDown.Store(true)
-	requestShutdown(sub)
 	sub.requestShutdown = nil
+	go requestShutdown(sub)
 }
 
 // completeShutdown completes the shutdown of the subscription

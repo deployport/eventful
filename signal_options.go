@@ -5,6 +5,12 @@ type SignalOptions struct {
 	emitBufferSize int
 }
 
+func newSignalOptions() SignalOptions {
+	return SignalOptions{
+		emitBufferSize: DefaultSignalBufferSize(),
+	}
+}
+
 // SignalOpt is an option for the signal
 type SignalOpt interface {
 	Apply(options *SignalOptions)
