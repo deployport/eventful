@@ -50,8 +50,12 @@ func (subs *listeners[T]) fire(v T) {
 	subs.input <- v
 }
 
-func (subs *listeners[T]) Listen() Listener[T] {
-	sub := newSignalSubscription(subs.requestShutdown, subs.fanout)
+func (subs *listeners[T]) Listen(opts ...ListenerOpt) Listener[T] {
+	o := newListenerOptions()
+	for _, opt := range opts {
+		opt.Apply(&o)
+	}
+	sub := newSignalSubscription(subs.requestShutdown, subs.fanout, o.bufferSize)
 	subs.addChan <- sub
 	sub.WaitAdded()
 	return sub

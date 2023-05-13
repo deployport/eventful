@@ -27,11 +27,11 @@ type signalSubscription[T any] struct {
 	shuttingDown    atomic.Bool
 }
 
-func newSignalSubscription[T any](requestShutdown func(sub *signalSubscription[T]), input <-chan T) *signalSubscription[T] {
+func newSignalSubscription[T any](requestShutdown func(sub *signalSubscription[T]), input <-chan T, bufferSize int) *signalSubscription[T] {
 	sub := &signalSubscription[T]{
 		input:           input,
 		requestShutdown: requestShutdown,
-		output:          make(chan T), // TODO: use buffer
+		output:          make(chan T, bufferSize),
 		closeChan:       make(chan struct{}),
 		launchedChan:    make(chan struct{}),
 		addedChan:       make(chan struct{}),
