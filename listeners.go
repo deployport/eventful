@@ -2,7 +2,7 @@ package eventful
 
 // Listeners allows to listen to a signal. Signal owners can safely expose Listeners to the outside world.
 type Listeners[T any] interface {
-	Listen() Listener[T]
+	Listen(opts ...ListenerOpt) Listener[T]
 }
 
 type listeners[T any] struct {

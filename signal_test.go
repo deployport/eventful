@@ -84,8 +84,7 @@ func TestSignalStream(t *testing.T) {
 
 func TestSignalClose(t *testing.T) {
 	ev := NewSignal[int]()
-	// ev.Emit(20)
-	// ev.Emit(30)
+	ev.Emit(20)
 	subA := ev.Listeners().Listen()
 	t.Logf("subA added")
 	defer subA.Close()
