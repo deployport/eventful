@@ -56,7 +56,7 @@ func TestSignal(t *testing.T) {
 }
 
 func TestSignalListenOnce(t *testing.T) {
-	ev := NewSignal[int]()
+	ev := NewSignal[int](WithSignalBufferSize(3))
 	wg := sync.WaitGroup{}
 	sub := ev.Listeners().Listen()
 	defer sub.Close()
@@ -103,6 +103,37 @@ func TestSignalStream(t *testing.T) {
 		for i := 0; i < max; i++ {
 			t.Logf("emiting signal, i=%d", i)
 			ev.Emit(i)
+		}
+	}()
+	wg.Wait()
+	time.Sleep(time.Second)
+	require.Len(t, received, max)
+}
+
+func TestSignalStreamPort(t *testing.T) {
+	max := 1000
+	ev := NewSignal[int]()
+	go func() {
+		for i := 0; i < max; i++ {
+			ev.Emit(i)
+		}
+	}()
+	wg := sync.WaitGroup{}
+	subA := ev.Listeners().Listen()
+	defer subA.Close()
+	subB := ev.Listeners().Listen()
+	defer subB.Close()
+	wg.Add(max)
+	received := []int{}
+	go func() {
+		for i := range subA.C() {
+			t.Logf("sub A received signal, i=%d", i)
+			received = append(received, i)
+			wg.Done()
+		}
+		for i := range subB.C() {
+			t.Logf("sub B received signal and then sleeping, i=%d", i)
+			time.Sleep(time.Hour)
 		}
 	}()
 	wg.Wait()

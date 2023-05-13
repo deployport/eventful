@@ -1,44 +1,57 @@
 package eventful
 
-import (
-	"sync"
-)
-
 // Listeners allows to listen to a signal. Signal owners can safely expose Listeners to the outside world.
 type Listeners[T any] interface {
 	Listen() Listener[T]
 }
 
 type listeners[T any] struct {
-	subsCounter int
-	subs        map[subID]*signalSubscription[T]
-	subsMutex   sync.RWMutex
+	fanout     chan T
+	input      chan T
+	addChan    chan *signalSubscription[T]
+	removeChan chan *signalSubscription[T]
+}
+
+func newListeners[T any](bufferSize int) *listeners[T] {
+	listeners := &listeners[T]{
+		fanout:     make(chan T, bufferSize),
+		input:      make(chan T, bufferSize),
+		addChan:    make(chan *signalSubscription[T], 1),
+		removeChan: make(chan *signalSubscription[T], 1),
+	}
+	go listeners.loop()
+	return listeners
+}
+
+func (subs *listeners[T]) loop() {
+	listenerCount := 0
+	for {
+		select {
+		case sub := <-subs.addChan:
+			sub.WaitLaunch()
+			listenerCount++
+		case sub := <-subs.removeChan:
+			listenerCount--
+			sub.completeShutdown()
+		case v := <-subs.input:
+			for i := 0; i < listenerCount; i++ {
+				subs.fanout <- v // repeat the same value for each listener
+			}
+		}
+	}
 }
 
 func (subs *listeners[T]) fire(v T) {
-	subs.subsMutex.RLock()
-	defer subs.subsMutex.RUnlock()
-	for _, sub := range subs.subs {
-		sub.fire(v)
-	}
+	subs.input <- v
 }
 
 func (subs *listeners[T]) Listen() Listener[T] {
-	subs.subsMutex.Lock()
-	defer subs.subsMutex.Unlock()
-	subs.subsCounter++
-	id := subID(subs.subsCounter)
-	sub := &signalSubscription[T]{
-		id:          id,
-		unsubscribe: subs.unsubscribe,
-		c:           make(chan T),
-	}
-	subs.subs[id] = sub
+	sub := newSignalSubscription(subs.requestShutdown, subs.fanout)
+	subs.addChan <- sub
+	sub.WaitLaunch()
 	return sub
 }
 
-func (subs *listeners[T]) unsubscribe(id subID) {
-	subs.subsMutex.Lock()
-	defer subs.subsMutex.Unlock()
-	delete(subs.subs, id)
+func (subs *listeners[T]) requestShutdown(sub *signalSubscription[T]) {
+	subs.removeChan <- sub
 }
