@@ -2,7 +2,6 @@ package eventful
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,40 +18,18 @@ func TestSignal(t *testing.T) {
 	sub2 := ev.Listeners().Listen()
 	defer sub2.Close()
 	wg.Add(2)
-	doneWithFinish := atomic.Int32{}
-	finishedFire := atomic.Bool{}
-	go func() {
-		v := <-sub.C()
+	read := func(l Listener[int]) {
+		v := <-l.C()
 		receivedMutex.Lock()
 		received = append(received, v)
 		receivedMutex.Unlock()
-		if finishedFire.Load() {
-			doneWithFinish.Add(1)
-		}
 		wg.Done()
-	}()
-	go func() {
-		v := <-sub2.C()
-		receivedMutex.Lock()
-		received = append(received, v)
-		receivedMutex.Unlock()
-		if finishedFire.Load() {
-			doneWithFinish.Add(1)
-		}
-		wg.Done()
-	}()
-	testDone := make(chan bool)
-	go func() {
-		wg.Wait()
-		testDone <- true
-	}()
+	}
+	go read(sub)
+	go read(sub2)
 	ev.Emit(10)
-	finishedFire.Store(true)
-	<-testDone
-	require.Equal(t, int32(2), doneWithFinish.Load())
-	require.Len(t, received, 2)
-	require.Equal(t, 10, received[0])
-	require.Equal(t, 10, received[1])
+	wg.Wait()
+	require.Equal(t, []int{10, 10}, received)
 }
 
 func TestSignalStream(t *testing.T) {

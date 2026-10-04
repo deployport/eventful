@@ -52,23 +52,17 @@ func TestEvent(t *testing.T) {
 func TestEventError(t *testing.T) {
 	ctx := context.Background()
 	ev := NewEvent[int]()
-	doneWithFinish := atomic.Int32{}
-	sub := ev.Subscriptions().Subscribe(func(ctx context.Context, v int) error {
-		doneWithFinish.Add(1)
+	ran := atomic.Int32{}
+	fail := func(ctx context.Context, v int) error {
+		ran.Add(1)
 		return fmt.Errorf("error returned")
-	})
+	}
+	sub := ev.Subscriptions().Subscribe(fail)
 	defer sub.Close()
-	sub2 := ev.Subscriptions().Subscribe(func(ctx context.Context, v int) error {
-		doneWithFinish.Add(1)
-		return nil
-	})
+	sub2 := ev.Subscriptions().Subscribe(fail)
 	defer sub2.Close()
 
-	testDone := make(chan error)
-	go func() {
-		testDone <- ev.Trigger(ctx, 10)
-	}()
-	err := <-testDone
+	err := ev.Trigger(ctx, 10)
 	require.NotNil(t, err, "expected error to be returned from a subscription")
-	require.Equal(t, int32(1), doneWithFinish.Load())
+	require.Equal(t, int32(1), ran.Load(), "a subscription ran after another returned an error")
 }

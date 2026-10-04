@@ -25,6 +25,8 @@ func (f ListenerOptFunc) Apply(options *ListenerOptions) {
 }
 
 // WithListenerBufferSize sets the buffer size for the signal listener. The default value is DefaultSignalBufferSize().
+// While the buffer is full, the signal delays further values for every listener until this
+// one reads or is closed.
 func WithListenerBufferSize(bufferSize int) ListenerOpt {
 	return ListenerOptFunc(func(options *ListenerOptions) {
 		options.bufferSize = bufferSize

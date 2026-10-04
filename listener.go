@@ -1,9 +1,6 @@
 package eventful
 
-import (
-	"sync"
-	"sync/atomic"
-)
+import "sync"
 
 // Listener is a subscription to a signal
 type Listener[T any] interface {
@@ -11,93 +8,63 @@ type Listener[T any] interface {
 	C() <-chan T
 	// Close unsubscribes from the event preventing the channel from receiving more events.
 	// After a successful call to Close, eventually the channel is closed. Note that the channel may still have messages to be read before it is closed.
+	// Close never waits on a delivery: a value pending to this listener is abandoned.
 	Close()
 }
 
 type subID int
 
 type signalSubscription[T any] struct {
-	requestShutdown func(sub *signalSubscription[T])
-	output          chan T
-	input           <-chan T
-	mutex           sync.Mutex
-	closeChan       chan struct{}
-	launchedChan    chan struct{}
-	addedChan       chan struct{}
-	shuttingDown    atomic.Bool
+	mutex  sync.Mutex    // makes Close idempotent
+	closed chan struct{} // closed once the listener is closed
+	wake   func()        // tells the signal's loop that a listener closed
+	output chan T        // the signal's loop is its only sender
 }
 
-func newSignalSubscription[T any](requestShutdown func(sub *signalSubscription[T]), input <-chan T, bufferSize int) *signalSubscription[T] {
-	sub := &signalSubscription[T]{
-		input:           input,
-		requestShutdown: requestShutdown,
-		output:          make(chan T, bufferSize),
-		closeChan:       make(chan struct{}),
-		launchedChan:    make(chan struct{}),
-		addedChan:       make(chan struct{}),
-	}
-	go sub.loop()
-	return sub
-}
-
-// WaitLaunch blocks until the subscription internal loop has launched
-func (sub *signalSubscription[T]) WaitLaunch() {
-	<-sub.launchedChan
-}
-
-// WaitCreation notifies the subscription has been added to the listeners
-func (sub *signalSubscription[T]) NotifyAdded() {
-	sub.WaitLaunch()
-	close(sub.addedChan)
-}
-
-// WaitCreation blocks until the subscription has been added to the listeners
-func (sub *signalSubscription[T]) WaitAdded() {
-	<-sub.addedChan
-}
-
-func (sub *signalSubscription[T]) launchComplete() {
-	close(sub.launchedChan)
-}
-func (sub *signalSubscription[T]) loop() {
-	defer close(sub.output)
-	sub.launchComplete()
-	for !sub.shuttingDown.Load() {
-		select {
-		case v, open := <-sub.input:
-			if !open {
-				return
-			}
-			if sub.shuttingDown.Load() {
-				continue
-			}
-			sub.output <- v
-		case <-sub.closeChan:
-			return
-		}
+func newSignalSubscription[T any](wake func(), bufferSize int) *signalSubscription[T] {
+	return &signalSubscription[T]{
+		wake:   wake,
+		closed: make(chan struct{}),
+		output: make(chan T, bufferSize),
 	}
 }
 
+// Close marks the listener closed and wakes the signal's loop, which closes the channel. Close
+// never blocks: not on its own delivery, and not on a delivery to another listener. Values
+// already in the buffer can still be read.
 func (sub *signalSubscription[T]) Close() {
-	sub.beginShutdown()
-}
-
-func (sub *signalSubscription[T]) beginShutdown() {
 	sub.mutex.Lock()
-	defer sub.mutex.Unlock()
-	requestShutdown := sub.requestShutdown
-	if requestShutdown == nil {
+	if sub.isClosed() {
+		sub.mutex.Unlock()
 		return
 	}
-	sub.shuttingDown.Store(true)
-	sub.requestShutdown = nil
-	go requestShutdown(sub)
+	close(sub.closed)
+	sub.mutex.Unlock()
+	sub.wake()
 }
 
-// completeShutdown completes the shutdown of the subscription
-// meaning it should close the output channel and stop listening to the input channel
-func (sub *signalSubscription[T]) completeShutdown() {
-	close(sub.closeChan)
+// isClosed reports whether Close has been called. It never blocks.
+func (sub *signalSubscription[T]) isClosed() bool {
+	select {
+	case <-sub.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// closeOutput closes the listener's channel. Call it only from the goroutine that sends on it
+// (the signal's loop), or for a listener that never reached the loop.
+func (sub *signalSubscription[T]) closeOutput() {
+	close(sub.output)
+}
+
+// closeUnregistered closes a listener that never reached the signal's loop. Listen calls it
+// before it hands the listener out, so nothing else can touch the listener meanwhile and no
+// lock is needed. A later Close finds closed closed and returns; the channel reads as closed.
+func (sub *signalSubscription[T]) closeUnregistered() {
+	close(sub.closed)
+	sub.closeOutput()
 }
 
 func (sub *signalSubscription[T]) C() <-chan T {
